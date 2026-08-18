@@ -110,6 +110,7 @@ module Snippetion
   class App
     ROUTE = %r{\A/([a-z0-9_-]+)/([a-z0-9_-]+)(?:/([a-z0-9]+))?\z}.freeze
     PREVIEW_ROUTE = %r{\A/preview/([a-z0-9_-]+)/([a-z0-9_-]+)(?:/([a-z0-9]+))?\z}.freeze
+    EDIT_ROUTE = %r{\A/edit/([a-z0-9_-]+)/([a-z0-9_-]+)\z}.freeze
 
     def initialize(root:, access_token: ENV["ACCESS_TOKEN"])
       @root = root
@@ -117,11 +118,18 @@ module Snippetion
     end
 
     def call(method:, path:, query_string: nil, headers: {})
+      return netrc_response(query_string:, headers:) if path == "/.netrc"
       return response(405, "method not allowed\n") unless method == "GET"
       return response(200, "request /<group>/<project>/<choice> or /preview/<group>/<project>/<choice>\n") if path == "/"
 
       params = parse_query(query_string)
       return unauthorized_response unless authorized?(params, headers)
+
+      edit_match = EDIT_ROUTE.match(path)
+      if edit_match
+        group, project = edit_match.captures
+        return edit_response(group:, project:, params:)
+      end
 
       preview_match = PREVIEW_ROUTE.match(path)
       if preview_match
@@ -190,6 +198,118 @@ module Snippetion
         </html>
       HTML
       html_response(200, body)
+    end
+
+    def netrc_response(query_string:, headers:)
+      params = parse_query(query_string)
+      token = params["token"] || bearer_token(headers)
+
+      if @access_token.to_s.empty?
+        return response(200, "# No ACCESS_TOKEN is configured on this server.\n")
+      end
+
+      unless token == @access_token
+        return unauthorized_response
+      end
+
+      host = params["host"] || "localhost"
+      login = params["login"] || "token"
+      entry = "machine #{host}\nlogin #{login}\npassword #{token}\n"
+      response(200, entry)
+    end
+
+    def edit_response(group:, project:, params:)
+      proj = Project.load(root: @root, group: group, project: project)
+      source_path = File.join(@root, "projects", group, "#{project}.snippet")
+      source = File.read(source_path)
+
+      token_param = params["token"] ? CGI.escapeHTML(params["token"]) : nil
+      token_hidden = token_param ? "<input type=\"hidden\" id=\"token\" value=\"#{token_param}\">" : ""
+      fetch_base = params["token"] ? "?token=#{CGI.escape(params["token"])}" : ""
+
+      optional_checkboxes = proj.optional_parts.each_with_index.map do |part, i|
+        bit = 1 << i
+        "<label><input type=\"checkbox\" class=\"opt-bit\" value=\"#{bit}\"> #{escape_html(part.name)}</label>"
+      end.join("\n          ")
+
+      body = <<~HTML
+        <!DOCTYPE html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>Edit #{escape_html("#{group}/#{project}")}</title>
+            <style>
+              body { font-family: monospace; margin: 1rem; }
+              .layout { display: flex; gap: 1rem; }
+              .pane { flex: 1; display: flex; flex-direction: column; }
+              textarea { width: 100%; flex: 1; min-height: 400px; font-family: monospace; font-size: 0.9rem; }
+              pre { background: #f4f4f4; padding: 0.75rem; flex: 1; min-height: 400px; overflow: auto; white-space: pre; }
+              .options { margin-bottom: 0.5rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+              .curl-line { margin-top: 0.5rem; font-size: 0.85rem; color: #555; }
+              button { padding: 0.3rem 0.8rem; }
+            </style>
+          </head>
+          <body>
+            #{token_hidden}
+            <h1>#{escape_html("#{group}/#{project}")}</h1>
+            <div class="options">
+              <strong>Optional parts:</strong>
+              #{optional_checkboxes.empty? ? "(none)" : optional_checkboxes}
+            </div>
+            <div class="layout">
+              <div class="pane">
+                <h2>Source</h2>
+                <textarea id="source" spellcheck="false">#{escape_html(source)}</textarea>
+                <button id="save-btn" style="display:none">Save (not persisted)</button>
+              </div>
+              <div class="pane">
+                <h2>Preview</h2>
+                <p class="curl-line" id="curl-line"></p>
+                <pre id="preview"></pre>
+              </div>
+            </div>
+            <script>
+              (function () {
+                var sourceEl = document.getElementById("source");
+                var previewEl = document.getElementById("preview");
+                var curlEl = document.getElementById("curl-line");
+                var tokenEl = document.getElementById("token");
+                var tokenVal = tokenEl ? tokenEl.value : "";
+                var fetchBase = tokenVal ? ("?token=" + encodeURIComponent(tokenVal)) : "";
+
+                function choiceValue() {
+                  var bits = 0;
+                  document.querySelectorAll(".opt-bit:checked").forEach(function (cb) {
+                    bits |= parseInt(cb.value, 10);
+                  });
+                  return bits.toString(36);
+                }
+
+                function updatePreview() {
+                  var choice = choiceValue();
+                  var fetchPath = "/#{escape_html(group)}/#{escape_html(project)}/" + choice + (fetchBase ? fetchBase : "");
+                  curlEl.textContent = "curl " + window.location.origin + fetchPath;
+                  fetch(fetchPath)
+                    .then(function (r) { return r.text(); })
+                    .then(function (t) { previewEl.textContent = t; })
+                    .catch(function (e) { previewEl.textContent = "Error: " + e; });
+                }
+
+                document.querySelectorAll(".opt-bit").forEach(function (cb) {
+                  cb.addEventListener("change", updatePreview);
+                });
+
+                updatePreview();
+              })();
+            </script>
+          </body>
+        </html>
+      HTML
+      html_response(200, body)
+    rescue ProjectNotFound
+      response(404, "not found\n")
+    rescue ParseError => e
+      response(422, "#{e.message}\n")
     end
 
     def unauthorized_response

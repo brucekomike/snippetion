@@ -59,7 +59,42 @@ curl --oauth2-bearer <token> http://localhost:9292/bash/test/2
 curl "http://localhost:9292/preview/bash/test/2?token=<token>"
 ```
 
-## Test
+## Edit & preview in a browser
+
+Open the interactive editor for any snippet (source on the left, live preview on the right):
+
+```bash
+open http://localhost:9292/edit/bash/test
+# with authentication:
+open "http://localhost:9292/edit/bash/test?token=<token>"
+```
+
+Toggle the optional-part checkboxes to see the rendered output change live.
+
+## .netrc generator
+
+Generate a ready-to-paste `.netrc` entry for quick auth setup:
+
+```bash
+curl "http://localhost:9292/.netrc?token=<token>&host=localhost:9292&login=token"
+# >> machine localhost:9292
+# >> login token
+# >> password <token>
+```
+
+Append it to `~/.netrc`:
+
+```bash
+curl "http://localhost:9292/.netrc?token=<token>&host=localhost:9292" >> ~/.netrc
+```
+
+| Query param | Default | Description |
+|---|---|---|
+| `token` | — | your access token (required when `ACCESS_TOKEN` is set) |
+| `host` | `localhost` | hostname to embed in the `machine` line |
+| `login` | `token` | login name to embed in the `login` line |
+
+
 
 ```bash
 ruby -Itest test/snippetion_test.rb

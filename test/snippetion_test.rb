@@ -19,6 +19,7 @@ class SnippetionTest < Minitest::Test
     assert_equal "#!/bin/bash\nexport B=aaa\necho $B $D\n", @project.render("2")
     assert_equal "#!/bin/bash\necho A\necho $B $D\n", @project.render("1")
     assert_equal "#!/bin/bash\necho A\nexport B=aaa\nexport D=ggg\necho $B $D\n", @project.render("7")
+    assert_equal "#!/bin/bash\necho A\nexport B=aaa\necho $B $D\n", @project.render("z")
   end
 
   def test_app_serves_group_project_choice_route
@@ -36,10 +37,17 @@ class SnippetionTest < Minitest::Test
     assert_equal "#!/bin/bash\necho $B $D\n", body
   end
 
-  def test_app_rejects_invalid_choice
+  def test_app_accepts_base36_choice_token
     status, _, body = @app.call(method: "GET", path: "/bash/test/z")
 
-    assert_equal 400, status
-    assert_match(/invalid choice character/, body)
+    assert_equal 200, status
+    assert_equal "#!/bin/bash\necho A\nexport B=aaa\necho $B $D\n", body
+  end
+
+  def test_app_rejects_invalid_choice
+    status, _, body = @app.call(method: "GET", path: "/bash/test/-")
+
+    assert_equal 404, status
+    assert_equal "not found\n", body
   end
 end

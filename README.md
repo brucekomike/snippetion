@@ -21,6 +21,7 @@ echo A
 - `must` parts are always included
 - `opt` parts are controlled by the choice value in the URL
 - optional parts are mapped to bits from least-significant to most-significant in file order
+- choice tokens use lowercase base-36 characters: `0-9` and `a-z`
 
 Example:
 

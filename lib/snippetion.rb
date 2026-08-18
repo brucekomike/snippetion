@@ -7,7 +7,7 @@ module Snippetion
   Part = Struct.new(:name, :required, :body, keyword_init: true)
 
   module Choice
-    ALPHABET = "0123456789abcdefghijklmnopqrstuv".freeze
+    ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz".freeze
     INDEX = ALPHABET.chars.each_with_index.to_h.freeze
 
     module_function
@@ -20,7 +20,7 @@ module Snippetion
         digit = INDEX[char]
         raise InvalidChoice, "invalid choice character: #{char}" unless digit
 
-        (total * 32) + digit
+        (total * ALPHABET.length) + digit
       end
     end
   end

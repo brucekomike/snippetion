@@ -1,3 +1,6 @@
+require "cgi"
+require "uri"
+
 module Snippetion
   class Error < StandardError; end
   class InvalidChoice < Error; end
@@ -106,14 +109,25 @@ module Snippetion
 
   class App
     ROUTE = %r{\A/([a-z0-9_-]+)/([a-z0-9_-]+)(?:/([a-z0-9]+))?\z}.freeze
+    PREVIEW_ROUTE = %r{\A/preview/([a-z0-9_-]+)/([a-z0-9_-]+)(?:/([a-z0-9]+))?\z}.freeze
 
-    def initialize(root:)
+    def initialize(root:, access_token: ENV["ACCESS_TOKEN"])
       @root = root
+      @access_token = access_token
     end
 
-    def call(method:, path:)
+    def call(method:, path:, query_string: nil, headers: {})
       return response(405, "method not allowed\n") unless method == "GET"
-      return response(200, "request /<group>/<project>/<choice>\n") if path == "/"
+      return response(200, "request /<group>/<project>/<choice> or /preview/<group>/<project>/<choice>\n") if path == "/"
+
+      params = parse_query(query_string)
+      return unauthorized_response unless authorized?(params, headers)
+
+      preview_match = PREVIEW_ROUTE.match(path)
+      if preview_match
+        group, project, choice = preview_match.captures
+        return preview_response(group:, project:, choice: choice || "0", params:)
+      end
 
       match = ROUTE.match(path)
       return response(404, "not found\n") unless match
@@ -131,13 +145,76 @@ module Snippetion
 
     private
 
+    def authorized?(params, headers)
+      return true if @access_token.to_s.empty?
+
+      token = params["token"] || bearer_token(headers)
+      token == @access_token
+    end
+
+    def bearer_token(headers)
+      authorization = Array(headers["authorization"]).first || Array(headers["Authorization"]).first
+      return unless authorization
+
+      match = /\ABearer\s+(.+)\z/.match(authorization)
+      match && match[1]
+    end
+
+    def parse_query(query_string)
+      return {} if query_string.to_s.empty?
+
+      URI.decode_www_form(query_string).each_with_object({}) do |(key, value), params|
+        params[key] = value
+      end
+    end
+
+    def preview_response(group:, project:, choice:, params:)
+      rendered = Project.load(root: @root, group: group, project: project).render(choice)
+      base_path = "/#{group}/#{project}/#{choice}"
+      fetch_query = params["token"] ? "?token=#{CGI.escape(params["token"])}" : ""
+      fetch_url = "#{base_path}#{fetch_query}"
+      body = <<~HTML
+        <!DOCTYPE html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>Snippet Preview</title>
+          </head>
+          <body>
+            <h1>#{escape_html("#{group}/#{project}")}</h1>
+            <p>Choice token: <code>#{escape_html(choice)}</code></p>
+            <p><code>curl #{escape_html(fetch_url)}</code></p>
+            <p><code>wget -O - #{escape_html(fetch_url)}</code></p>
+            <pre>#{escape_html(rendered)}</pre>
+          </body>
+        </html>
+      HTML
+      html_response(200, body)
+    end
+
+    def unauthorized_response
+      build_response(401, "unauthorized\n", "text/plain; charset=utf-8", { "WWW-Authenticate" => "Bearer " + 'realm="snippetion"' })
+    end
+
+    def escape_html(value)
+      CGI.escapeHTML(value)
+    end
+
     def response(status, body)
+      build_response(status, body, "text/plain; charset=utf-8")
+    end
+
+    def html_response(status, body)
+      build_response(status, body, "text/html; charset=utf-8")
+    end
+
+    def build_response(status, body, content_type, extra_headers = {})
       [
         status,
         {
-          "Content-Type" => "text/plain; charset=utf-8",
+          "Content-Type" => content_type,
           "Content-Length" => body.bytesize.to_s
-        },
+        }.merge(extra_headers),
         body
       ]
     end

@@ -41,6 +41,24 @@ Then request:
 curl http://localhost:9292/bash/test/2
 ```
 
+Preview in a browser:
+
+```bash
+open http://localhost:9292/preview/bash/test/2
+```
+
+## Access token
+
+Set `ACCESS_TOKEN` to require authenticated access for both script and preview routes.
+
+You can pass the token either as a bearer token header or as a `token` query parameter.
+
+```bash
+ACCESS_TOKEN=preview-token ruby server.rb
+curl --oauth2-bearer <token> http://localhost:9292/bash/test/2
+curl "http://localhost:9292/preview/bash/test/2?token=<token>"
+```
+
 ## Test
 
 ```bash

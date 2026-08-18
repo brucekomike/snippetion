@@ -7,6 +7,8 @@ class SnippetionTest < Minitest::Test
   def setup
     @app = Snippetion::App.new(root: ROOT)
     @project = Snippetion::Project.load(root: ROOT, group: "bash", project: "test")
+    @access_token = "preview-token"
+    @secured_app = Snippetion::App.new(root: ROOT, access_token: @access_token)
   end
 
   def test_parses_required_and_optional_parts
@@ -49,5 +51,48 @@ class SnippetionTest < Minitest::Test
 
     assert_equal 404, status
     assert_equal "not found\n", body
+  end
+
+  def test_preview_route_renders_html_preview
+    status, headers, body = @app.call(method: "GET", path: "/preview/bash/test/3")
+
+    assert_equal 200, status
+    assert_equal "text/html; charset=utf-8", headers["Content-Type"]
+    assert_includes body, "<h1>bash/test</h1>"
+    assert_includes body, "<code>curl /bash/test/3</code>"
+    assert_includes body, "<pre>#!/bin/bash"
+  end
+
+  def test_secured_app_rejects_missing_token
+    status, headers, body = @secured_app.call(method: "GET", path: "/bash/test/3")
+
+    assert_equal 401, status
+    assert_equal ['Bearer', 'realm="snippetion"'].join(" "), headers["WWW-Authenticate"]
+    assert_equal "unauthorized\n", body
+  end
+
+  def test_secured_app_accepts_query_token
+    status, _, body = @secured_app.call(method: "GET", path: "/bash/test/3", query_string: "token=#{@access_token}")
+
+    assert_equal 200, status
+    assert_equal "#!/bin/bash\necho A\nexport B=aaa\necho $B $D\n", body
+  end
+
+  def test_secured_preview_keeps_token_in_fetch_urls
+    status, _, body = @secured_app.call(method: "GET", path: "/preview/bash/test/3", query_string: "token=#{@access_token}")
+
+    assert_equal 200, status
+    assert_includes body, "/bash/test/3?token=#{@access_token}"
+  end
+
+  def test_secured_app_accepts_bearer_token
+    status, _, body = @secured_app.call(
+      method: "GET",
+      path: "/bash/test/2",
+      headers: { "authorization" => ["Bearer " + @access_token] }
+    )
+
+    assert_equal 200, status
+    assert_equal "#!/bin/bash\nexport B=aaa\necho $B $D\n", body
   end
 end
